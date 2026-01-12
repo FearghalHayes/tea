@@ -2,6 +2,13 @@
 
 TEA is a lightweight compatibility layer written in Zig that enables running x86_64 Linux ELF binaries natively on Windows. It provides a user-mode environment that emulates the Linux kernel interface, allowing binaries to execute without virtualization or a full Linux distribution.
 
+## 🚀 Quick Start
+
+Download the latest stable release for Windows:
+[tea-windows-x86_64.exe](https://github.com/FearghalHayes/tea/releases/latest/download/tea-windows-x86_64.exe)
+
+[View all releases](https://github.com/FearghalHayes/tea/releases)
+
 ## 🏗️ Architecture
 
 TEA operates by intercepting Linux system calls and translating them into equivalent Windows NT operations.
