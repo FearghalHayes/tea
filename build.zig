@@ -10,6 +10,10 @@ pub fn build(b: *std.Build) void {
 
     const optimize = b.standardOptimizeOption(.{});
 
+    const verbose_logging = b.option(bool, "verbose_logging", "Enable verbose logging") orelse false;
+    const options = b.addOptions();
+    options.addOption(bool, "verbose_logging", verbose_logging);
+
     const exe = b.addExecutable(.{
         .name = "tea",
         .root_module = b.createModule(.{
@@ -18,6 +22,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
+    exe.root_module.addOptions("config", options);
 
     // TEA needs to be able to map memory at low addresses,
     // so we might need to adjust base address or other linker settings later.
@@ -40,6 +45,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
+    unit_tests.root_module.addOptions("config", options);
 
     const run_unit_tests = b.addRunArtifact(unit_tests);
     const test_step = b.step("test", "Run unit tests");

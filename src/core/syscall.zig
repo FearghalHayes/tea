@@ -1,5 +1,7 @@
 const std = @import("std");
 const windows = std.os.windows;
+const log = std.log.scoped(.syscall);
+const veh_log = std.log.scoped(.veh);
 const signal = @import("signal.zig");
 const thread = @import("thread.zig");
 
@@ -81,7 +83,7 @@ pub const signal_frame = extern struct {
 
 pub fn init() !void {
     if (AddVectoredExceptionHandler(1, vehHandler)) |_| {
-        std.debug.print("TEA: Initializing Syscall Interception (VEH)... OK\n", .{});
+        log.info("TEA: Initializing Syscall Interception (VEH)... OK", .{});
     } else {
         return error.VehRegistrationFailed;
     }
@@ -108,7 +110,7 @@ fn vehHandler(info: *EXCEPTION_POINTERS) callconv(.c) i32 {
         asm volatile ("rdfsbase %[fs]"
             : [fs] "=r" (fs_base),
         );
-        std.debug.print("TEA: Exception 0x{x} at RIP=0x{x}, Addr=0x{x}, FS_BASE=0x{x}\n", .{ record.ExceptionCode, info.ContextRecord.Rip, record.ExceptionInformation[1], fs_base });
+        veh_log.debug("TEA: Exception 0x{x:0>8} at RIP=0x{x:0>16}, Addr=0x{x:0>16}, FS_BASE=0x{x:0>16}", .{ record.ExceptionCode, info.ContextRecord.Rip, record.ExceptionInformation[1], fs_base });
     }
 
     const thread_ctx = thread.getCurrentThreadContext() orelse return EXCEPTION_CONTINUE_SEARCH;
@@ -186,7 +188,7 @@ fn vehHandler(info: *EXCEPTION_POINTERS) callconv(.c) i32 {
     if (signal.translateException(record.ExceptionCode)) |sig| {
         const sa = thread_ctx.signal_handlers[sig];
         if (sa.handler != 0 and sa.handler != 1) { // Not SIG_DFL (0) or SIG_IGN (1)
-            std.debug.print("TEA: Redirecting to signal handler for signal {d} at 0x{x}\n", .{ sig, sa.handler });
+            veh_log.info("TEA: Redirecting to signal handler for signal {d} at 0x{x:0>16}", .{ sig, sa.handler });
 
             // Basic stack frame setup
             // Linux x86_64: handler(sig, siginfo, ucontext)
@@ -358,7 +360,7 @@ fn wrap_sys_getresgid(ctx: *SyscallContext) SyscallResult {
 fn wrap_sys_lseek(ctx: *SyscallContext) SyscallResult {
     const vfs = @import("../vfs/mod.zig");
     const res = vfs.sys_lseek(@as(i32, @bitCast(@as(u32, @truncate(ctx.rdi)))), @as(i64, @bitCast(ctx.rsi)), @as(i32, @bitCast(@as(u32, @truncate(ctx.rdx))))) catch |err| {
-        std.debug.print("TEA: sys_lseek failed: {any}\n", .{err});
+        log.err("TEA: sys_lseek failed: {any}", .{err});
         return .{ .errno = 9 }; // EBADF
     };
     return .{ .value = res };
@@ -369,7 +371,7 @@ fn wrap_sys_sendto(ctx: *SyscallContext) SyscallResult {
 fn wrap_sys_writev(ctx: *SyscallContext) SyscallResult {
     const vfs = @import("../vfs/mod.zig");
     const bytes_written = vfs.sys_writev(@as(i32, @bitCast(@as(u32, @truncate(ctx.rdi)))), ctx.rsi, @as(i32, @bitCast(@as(u32, @truncate(ctx.rdx))))) catch |err| {
-        std.debug.print("TEA: sys_writev failed: {any}\n", .{err});
+        log.err("TEA: sys_writev failed: {any}", .{err});
         return .{ .errno = 9 }; // EBADF
     };
     return .{ .value = bytes_written };
@@ -380,7 +382,7 @@ fn wrap_sys_ioctl(ctx: *SyscallContext) SyscallResult {
 fn wrap_sys_fstatfs(ctx: *SyscallContext) SyscallResult {
     const vfs = @import("../vfs/mod.zig");
     vfs.sys_fstatfs(@as(i32, @bitCast(@as(u32, @truncate(ctx.rdi)))), ctx.rsi) catch |err| {
-        std.debug.print("TEA: sys_fstatfs failed: {any}\n", .{err});
+        log.err("TEA: sys_fstatfs failed: {any}", .{err});
         return .{ .errno = 9 }; // EBADF
     };
     return .{ .value = 0 };
@@ -416,7 +418,7 @@ fn wrap_sys_getdents(ctx: *SyscallContext) SyscallResult {
 fn wrap_sys_getcwd(ctx: *SyscallContext) SyscallResult {
     const vfs = @import("../vfs/mod.zig");
     const res = vfs.sys_getcwd(ctx.rdi, ctx.rsi) catch |err| {
-        std.debug.print("TEA: sys_getcwd failed: {any}\n", .{err});
+        log.err("TEA: sys_getcwd failed: {any}", .{err});
         return .{ .errno = 34 }; // ERANGE
     };
     return .{ .value = res };
@@ -483,13 +485,13 @@ const syscall_table = blk: {
 pub fn dispatch(ctx: *SyscallContext) SyscallResult {
     if (ctx.rax < syscall_table.len) {
         if (syscall_table[ctx.rax]) |handler| {
-            std.debug.print("TEA: Syscall {d} (RAX: 0x{x}, RDI: 0x{x}, RSI: 0x{x}, RDX: 0x{x}, R10: 0x{x})\n", .{ ctx.rax, ctx.rax, ctx.rdi, ctx.rsi, ctx.rdx, ctx.r10 });
+            log.debug("TEA: Syscall {d} (RAX: 0x{x:0>16}, RDI: 0x{x:0>16}, RSI: 0x{x:0>16}, RDX: 0x{x:0>16}, R10: 0x{x:0>16})", .{ ctx.rax, ctx.rax, ctx.rdi, ctx.rsi, ctx.rdx, ctx.r10 });
             const res = handler(ctx);
-            std.debug.print("TEA: Syscall {d} returns 0x{x} (errno {d})\n", .{ ctx.rax, res.value, res.errno });
+            log.debug("TEA: Syscall {d} returns 0x{x:0>16} (errno {d})", .{ ctx.rax, res.value, res.errno });
             return res;
         }
     }
-    std.debug.print("TEA: Unhandled syscall {d} (RDI: 0x{x}, RSI: 0x{x}, RDX: 0x{x}, R10: 0x{x}, R8: 0x{x}, R9: 0x{x})\n", .{
+    log.warn("TEA: Unhandled syscall {d} (RDI: 0x{x:0>16}, RSI: 0x{x:0>16}, RDX: 0x{x:0>16}, R10: 0x{x:0>16}, R8: 0x{x:0>16}, R9: 0x{x:0>16})", .{
         ctx.rax, ctx.rdi, ctx.rsi, ctx.rdx, ctx.r10, ctx.r8, ctx.r9,
     });
     return .{ .errno = 38 }; // ENOSYS
@@ -498,7 +500,7 @@ pub fn dispatch(ctx: *SyscallContext) SyscallResult {
 fn sys_getdents64(fd: usize, dirp: usize, count: usize) SyscallResult {
     const vfs = @import("../vfs/mod.zig");
     const res = vfs.sys_getdents64(@as(i32, @bitCast(@as(u32, @truncate(fd)))), dirp, count) catch |err| {
-        std.debug.print("TEA: sys_getdents64(fd={d}) failed: {any}\n", .{ @as(i32, @bitCast(@as(u32, @truncate(fd)))), err });
+        log.err("TEA: sys_getdents64(fd={d}) failed: {any}", .{ @as(i32, @bitCast(@as(u32, @truncate(fd)))), err });
         return .{ .errno = 9 }; // EBADF
     };
     return .{ .value = res };
@@ -507,7 +509,7 @@ fn sys_getdents64(fd: usize, dirp: usize, count: usize) SyscallResult {
 fn sys_open(path_ptr: usize, flags: i32, mode: i32) SyscallResult {
     const vfs = @import("../vfs/mod.zig");
     const fd = vfs.sys_open(path_ptr, flags, mode) catch |err| {
-        std.debug.print("TEA: sys_open failed: {any}\n", .{err});
+        log.err("TEA: sys_open failed: {any}", .{err});
         if (err == error.FileNotFound) return .{ .errno = 2 };
         return .{ .errno = 13 }; // EACCES or other
     };
@@ -517,7 +519,7 @@ fn sys_open(path_ptr: usize, flags: i32, mode: i32) SyscallResult {
 fn sys_read(fd: usize, buf: usize, count: usize) SyscallResult {
     const vfs = @import("../vfs/mod.zig");
     const bytes_read = vfs.sys_read(@as(i32, @bitCast(@as(u32, @truncate(fd)))), buf, count) catch |err| {
-        std.debug.print("TEA: sys_read failed: {any}\n", .{err});
+        log.err("TEA: sys_read failed: {any}", .{err});
         return .{ .errno = 9 }; // EBADF
     };
     return .{ .value = bytes_read };
@@ -526,7 +528,7 @@ fn sys_read(fd: usize, buf: usize, count: usize) SyscallResult {
 fn sys_write(fd: usize, buf: usize, count: usize) SyscallResult {
     const vfs = @import("../vfs/mod.zig");
     const bytes_written = vfs.sys_write(@as(i32, @bitCast(@as(u32, @truncate(fd)))), buf, count) catch |err| {
-        std.debug.print("TEA: sys_write failed: {any}\n", .{err});
+        log.err("TEA: sys_write failed: {any}", .{err});
         return .{ .errno = 9 }; // EBADF
     };
     return .{ .value = bytes_written };
@@ -535,7 +537,7 @@ fn sys_write(fd: usize, buf: usize, count: usize) SyscallResult {
 fn sys_close(fd: usize) SyscallResult {
     const vfs = @import("../vfs/mod.zig");
     vfs.sys_close(@as(i32, @bitCast(@as(u32, @truncate(fd))))) catch |err| {
-        std.debug.print("TEA: sys_close failed: {any}\n", .{err});
+        log.err("TEA: sys_close failed: {any}", .{err});
         return .{ .errno = 9 }; // EBADF
     };
     return .{ .value = 0 };
@@ -621,7 +623,7 @@ fn sys_dup2(oldfd: usize, newfd: usize) SyscallResult {
 fn sys_getdents(fd: usize, dirp: usize, count: usize) SyscallResult {
     const vfs = @import("../vfs/mod.zig");
     const res = vfs.sys_getdents(@as(i32, @bitCast(@as(u32, @truncate(fd)))), dirp, count) catch |err| {
-        std.debug.print("TEA: sys_getdents failed: {any}\n", .{err});
+        log.err("TEA: sys_getdents failed: {any}", .{err});
         return .{ .errno = 9 }; // EBADF
     };
     return .{ .value = res };

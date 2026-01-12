@@ -1,5 +1,6 @@
 const std = @import("std");
 const elf = std.elf;
+const log = std.log.scoped(.loader);
 const windows = std.os.windows;
 
 // Windows NT definitions
@@ -143,7 +144,7 @@ pub const ElfLoader = struct {
                     MEM_COMMIT,
                     PAGE_EXECUTE_READWRITE,
                 ) orelse {
-                    std.debug.print("TEA: VirtualAlloc (COMMIT) failed for 0x{x} with error {d}\n", .{ aligned_vaddr, GetLastError() });
+                    log.err("TEA: VirtualAlloc (COMMIT) failed for 0x{x:0>16} with error {d}", .{ aligned_vaddr, GetLastError() });
                     return error.MemoryAllocationFailed;
                 };
 

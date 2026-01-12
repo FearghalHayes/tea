@@ -1,5 +1,6 @@
 const std = @import("std");
 const windows = std.os.windows;
+const log = std.log.scoped(.vmm);
 const syscall = @import("syscall.zig");
 
 const NTSTATUS = i32;
@@ -131,6 +132,7 @@ pub const MmapManager = struct {
 };
 
 pub fn sys_mmap(addr: usize, length: usize, prot: i32, flags: i32, fd: i32, offset: usize) syscall.SyscallResult {
+    log.debug("mmap(addr=0x{x:0>16}, len={d}, prot=0x{x}, flags=0x{x}, fd={d}, off=0x{x})", .{ addr, length, prot, flags, fd, offset });
     const win_prot = MmapManager.translateProtection(prot);
 
     var final_addr: usize = addr;
@@ -240,6 +242,7 @@ pub fn sys_mprotect(addr: usize, length: usize, prot: i32) syscall.SyscallResult
 }
 
 pub fn sys_brk(brk: usize) syscall.SyscallResult {
+    log.debug("brk(0x{x:0>16})", .{brk});
     if (brk == 0 or brk < manager.brk_start) {
         return .{ .value = manager.brk_current };
     }
@@ -288,7 +291,7 @@ test "MmapManager brk" {
     // but in this high range it's likely it will.
     // If it fails, it returns the old brk.
     if (res.value == base_addr) {
-        std.debug.print("TEA: Warning: VirtualAlloc failed in brk test at 0x{x}\n", .{base_addr});
+        log.warn("TEA: Warning: VirtualAlloc failed in brk test at 0x{x:0>16}", .{base_addr});
     } else {
         try std.testing.expectEqual(next_brk, res.value);
         try std.testing.expect(manager.brk_current == next_brk);
